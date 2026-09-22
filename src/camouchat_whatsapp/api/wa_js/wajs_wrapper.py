@@ -132,10 +132,69 @@ class WapiWrapper:
     The Bridge connecting Playwright (Python) to wa-js (Browser).
     """
 
+    # Characters that must never survive into a generated filename: POSIX and
+    # Windows path separators, plus NUL.
+    _UNSAFE_PATH_CHARS = ("/", "\\", "\x00")
+
+    @staticmethod
+    def _safe_filename_component(value: str) -> str:
+        """
+        Reduce an untrusted string to a single, non-traversing path component.
+
+        Strips NUL bytes, collapses POSIX and Windows path separators, and trims
+        leading/trailing dots so the result can never be ``.`` or ``..``.
+        """
+        cleaned = str(value)
+        for ch in WapiWrapper._UNSAFE_PATH_CHARS:
+            cleaned = cleaned.replace(ch, "_")
+        cleaned = cleaned.strip().strip(".")
+        return cleaned or "unknown"
+
+    def _resolve_media_target(self, path: str) -> str:
+        """
+        Normalise a media output path and enforce the configured containment root.
+
+        Args:
+            path: Caller-supplied destination for a media write.
+
+        Returns:
+            The fully resolved destination path.
+
+        Raises:
+            ValueError: if the path contains a NUL byte, or if it resolves
+                outside ``media_root`` when one was configured.
+        """
+        if "\x00" in path:
+            raise ValueError("media path contains a NUL byte")
+
+        target = os.path.realpath(os.path.expanduser(path))
+
+        if self._media_root is None:
+            return target
+
+        root = str(self._media_root)
+        # A root of "/" (or a Windows drive root) already ends in the separator, so only
+        # append one when it is missing; blindly appending would make the prefix "//" and
+        # reject every path under a filesystem root.
+        prefix = root if root.endswith(os.sep) else root + os.sep
+        if target != root and not target.startswith(prefix):
+            raise ValueError(
+                f"refusing to write outside media_root: {target!r} is not inside {root!r}"
+            )
+        return target
+
     def _save_bytes(self, path: str, data: bytes) -> None:
-        """Sync helper for writing bytes to disk."""
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "wb") as f:
+        """
+        Sync helper for writing bytes to disk.
+
+        The destination is resolved and validated *before* any directory is
+        created, so a caller-supplied ``save_path`` cannot escape ``media_root``.
+        """
+        target = self._resolve_media_target(path)
+        parent = os.path.dirname(target)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with open(target, "wb") as f:
             f.write(data)
 
     def _read_text(self, path: str) -> str:
@@ -143,9 +202,23 @@ class WapiWrapper:
         with open(path, encoding="utf-8") as f:
             return f.read()
 
-    def __init__(self, page: Page, log: LoggerAdapter | Logger | None = None):
+    def __init__(
+        self,
+        page: Page,
+        log: LoggerAdapter | Logger | None = None,
+        media_root: str | os.PathLike[str] | None = None,
+    ):
+        """
+        Args:
+            page:       Playwright page bound to the WhatsApp Web session.
+            log:        Optional logger; falls back to the package logger.
+            media_root: Optional containment root for media writes. When set,
+                ``_save_bytes`` refuses any path that resolves outside it.
+        """
         self.page = page
         self.log = log or w_logger
+        # Containment root for media writes. None means no root was configured.
+        self._media_root: Path | None = Path(media_root).resolve() if media_root else None
         self._wpp_key: str = ""  # per-session rotated WPP handle key
         self._bridge_key: str | None = None
         self._queue_key: str | None = None
@@ -1109,8 +1182,11 @@ class WapiWrapper:
         media_type = message.get("type", "media")
         mimetype = message.get("mimetype") or message.get("mime_type")
         ext = WapiWrapper._ext_from_mime(mimetype, media_type)
-        safe_id = msg_id.replace("/", "_").replace("@", "_").replace(":", "_")
-        return str(Path(save_dir) / f"{media_type}_{safe_id}{ext}")
+        # Both components are attacker-influenced: id_serialized and type come
+        # straight from the MsgModel dump, so neither may carry a path separator.
+        safe_id = WapiWrapper._safe_filename_component(msg_id).replace("@", "_").replace(":", "_")
+        safe_type = WapiWrapper._safe_filename_component(media_type)
+        return str(Path(save_dir) / f"{safe_type}_{safe_id}{ext}")
 
     async def extract_media(
         self,

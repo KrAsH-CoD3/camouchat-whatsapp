@@ -23,6 +23,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   execute arbitrary JS inside the authenticated WhatsApp Web context. All 65 call sites
   now embed values via `json.dumps()`. Regression tests added in
   `tests/unit/WhatsApp/test_wajs_scripts.py`.
+- Hardened media file writes against path traversal. `WapiWrapper._save_bytes()` now
+  resolves its destination and refuses any path that escapes a configured `media_root`,
+  raising `ValueError` before any directory is created. The `media_root` argument is
+  optional and validated on construction, so existing callers are unaffected.
+- `WapiWrapper.media_save_path()` now neutralises path separators in the
+  attacker-influenced `id_serialized` and `type` fields of a `MsgModel` dump. A crafted
+  `type` such as `../../../etc/cron.d/x` previously produced a traversing filename.
+  Filenames generated from ordinary identifiers are unchanged.
 
 ---
 
