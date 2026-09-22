@@ -132,7 +132,7 @@ class WAJS_Scripts:
         """
         return f"""
             (() => {{
-                const chat = wpp.chat.get('{chat_id}');
+                const chat = wpp.chat.get({json.dumps(chat_id)});
                 if (!chat) return {{ error: "Chat not found in Meta memory." }};
 
                 // Dump all primitive properties from the React model
@@ -212,7 +212,7 @@ class WAJS_Scripts:
         opts_js = json.dumps(opts)
 
         return f"""
-            wpp.chat.getMessages('{chat_id}', {opts_js}).then(messages =>
+            wpp.chat.getMessages({json.dumps(chat_id)}, {opts_js}).then(messages =>
                 messages.map(m => {{
                     // Get the raw attributes object (MsgModel stores data in .attributes)
                     const attrs = m.attributes || m;
@@ -302,7 +302,7 @@ class WAJS_Scripts:
             msg_id: Full message key string e.g. 'true_916398014720@c.us_ABCDE123'
         """
         return f"""
-            wpp.chat.getMessageById('{msg_id}').then(m => {{
+            wpp.chat.getMessageById({json.dumps(msg_id)}).then(m => {{
                 const attrs = m.attributes || m;
                 const toB64 = (buf) => {{
                     const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
@@ -398,12 +398,12 @@ class WAJS_Scripts:
         safe_msg = json.dumps(message)
         safe_opts = json.dumps(options) if options else "{}"
         # Comma operator: fires sendTextMessage (error silenced), returns true instantly.
-        return f"(wpp.chat.sendTextMessage('{chat_id}', {safe_msg}, {safe_opts}).catch(() => null), true)"
+        return f"(wpp.chat.sendTextMessage({json.dumps(chat_id)}, {safe_msg}, {safe_opts}).catch(() => null), true)"
 
     @classmethod
     def mark_is_read(cls, chat_id: str) -> str:
         """Force-mark a chat as read at the api level."""
-        return f"wpp.chat.markIsRead('{chat_id}')"
+        return f"wpp.chat.markIsRead({json.dumps(chat_id)})"
 
     # ─────────────────────────────────────────────
     # 5. INDEXDB — DISK HISTORY
@@ -422,10 +422,14 @@ class WAJS_Scripts:
             min_row_id: The lower bound integer rowId.
             limit: Number of records to return.
         """
+        # int() is a real coercion, not just a type hint: an uncoerced value would be
+        # spliced straight into the JS source, so a string could inject code here too.
+        safe_min_row_id = int(min_row_id)
+        safe_limit = int(limit)
         return f"""
             wpp.indexdb.getMessagesFromRowId({{
-                minRowId: {min_row_id},
-                limit: {limit}
+                minRowId: {safe_min_row_id},
+                limit: {safe_limit}
             }}).then(messages =>
                 messages.map(m => {{
                     const attrs = m.attributes || m;
@@ -495,7 +499,8 @@ class WAJS_Scripts:
             limit: Max results to return.
         """
         safe_q = json.dumps(query)
-        return f"wpp.newsletter.search({safe_q}, {{ limit: {limit} }})"
+        safe_limit = int(limit)
+        return f"wpp.newsletter.search({safe_q}, {{ limit: {safe_limit} }})"
 
     @classmethod
     def newsletter_follow(cls, newsletter_id: str) -> str:
@@ -505,7 +510,7 @@ class WAJS_Scripts:
         Args:
             newsletter_id: The @newsletter JID e.g. '120363xxxxx@newsletter'.
         """
-        return f"wpp.newsletter.follow('{newsletter_id}')"
+        return f"wpp.newsletter.follow({json.dumps(newsletter_id)})"
 
     @classmethod
     def newsletter_unfollow(cls, newsletter_id: str) -> str:
@@ -515,18 +520,18 @@ class WAJS_Scripts:
         Args:
             newsletter_id: The @newsletter JID e.g. '120363xxxxx@newsletter'.
         """
-        return f"wpp.newsletter.unfollow('{newsletter_id}')"
+        return f"wpp.newsletter.unfollow({json.dumps(newsletter_id)})"
 
     @classmethod
     def newsletter_mute(cls, newsletter_id: str) -> str:
         """Mute notifications for a newsletter."""
-        return f"wpp.newsletter.mute('{newsletter_id}')"
+        return f"wpp.newsletter.mute({json.dumps(newsletter_id)})"
 
     @classmethod
     def newsletter_unmute(cls, newsletter_id: str) -> str:
         """Unmute notifications for a newsletter."""
         # unmute reuses unfollow then re-follow — WPP exposes it via mute toggle
-        return f"wpp.newsletter.mute('{newsletter_id}', false)"
+        return f"wpp.newsletter.mute({json.dumps(newsletter_id)}, false)"
 
     # ─────────────────────────────────────────────
     # 5. EVENT LISTENER SETUP — THE PUSH PIPELINE
@@ -692,7 +697,7 @@ class WAJS_Scripts:
         """Full raw contact model from ContactStore."""
         return f"""
             Promise.resolve((() => {{
-                const c = wpp.contact.get('{contact_id}');
+                const c = wpp.contact.get({json.dumps(contact_id)});
                 if (!c) return null;
                 const dump = {{}};
                 for (let key in c) {{
@@ -709,10 +714,11 @@ class WAJS_Scripts:
     @classmethod
     def contact_list(cls, count: int = 20) -> str:
         """Contacts in your address book. Limited to `count` to avoid JS timeout on large books."""
+        safe_count = int(count)
         return f"""
             (async () => {{
                 const all = await wpp.contact.list();
-                return all.slice(0, {count}).map(c => {{
+                return all.slice(0, {safe_count}).map(c => {{
                     const dump = {{}};
                     for (let key in c) {{
                         const val = c[key];
@@ -729,27 +735,27 @@ class WAJS_Scripts:
     @classmethod
     def contact_query_exists(cls, contact_id: str) -> str:
         """Check if a phone number has a WhatsApp account."""
-        return f"wpp.contact.queryExists('{contact_id}')"
+        return f"wpp.contact.queryExists({json.dumps(contact_id)})"
 
     @classmethod
     def contact_get_profile_picture_url(cls, contact_id: str) -> str:
         """Get a contact's current profile picture URL."""
-        return f"wpp.contact.getProfilePictureUrl('{contact_id}')"
+        return f"wpp.contact.getProfilePictureUrl({json.dumps(contact_id)})"
 
     @classmethod
     def contact_get_status(cls, contact_id: str) -> str:
         """Get a contact's About/Status text."""
-        return f"wpp.contact.getStatus('{contact_id}')"
+        return f"wpp.contact.getStatus({json.dumps(contact_id)})"
 
     @classmethod
     def contact_get_business_profile(cls, contact_id: str) -> str:
         """Get the WhatsApp Business profile data for a contact."""
-        return f"wpp.contact.getBusinessProfile('{contact_id}')"
+        return f"wpp.contact.getBusinessProfile({json.dumps(contact_id)})"
 
     @classmethod
     def contact_get_common_groups(cls, contact_id: str) -> str:
         """List of groups shared between you and a contact."""
-        return f"wpp.contact.getCommonGroups('{contact_id}')"
+        return f"wpp.contact.getCommonGroups({json.dumps(contact_id)})"
 
     # ─────────────────────────────────────────────
     # 9. GROUP (READ)
@@ -790,37 +796,37 @@ class WAJS_Scripts:
     @classmethod
     def group_get_participants(cls, group_id: str) -> str:
         """Full participant list of a group."""
-        return f"wpp.group.getParticipants('{group_id}')"
+        return f"wpp.group.getParticipants({json.dumps(group_id)})"
 
     @classmethod
     def group_get_invite_code(cls, group_id: str) -> str:
         """Get the invite link code for a group."""
-        return f"wpp.group.getInviteCode('{group_id}')"
+        return f"wpp.group.getInviteCode({json.dumps(group_id)})"
 
     @classmethod
     def group_get_info_from_invite_code(cls, invite_code: str) -> str:
         """Preview group metadata before joining via invite link."""
-        return f"wpp.group.getGroupInfoFromInviteCode('{invite_code}')"
+        return f"wpp.group.getGroupInfoFromInviteCode({json.dumps(invite_code)})"
 
     @classmethod
     def group_get_membership_requests(cls, group_id: str) -> str:
         """Pending join requests for a group."""
-        return f"wpp.group.getMembershipRequests('{group_id}')"
+        return f"wpp.group.getMembershipRequests({json.dumps(group_id)})"
 
     @classmethod
     def group_get_past_participants(cls, group_id: str) -> str:
         """Members who have left or been removed from the group."""
-        return f"wpp.group.getPastParticipants('{group_id}')"
+        return f"wpp.group.getPastParticipants({json.dumps(group_id)})"
 
     @classmethod
     def group_i_am_admin(cls, group_id: str) -> str:
         """Check if you are an admin in this group."""
-        return f"wpp.group.iAmAdmin('{group_id}')"
+        return f"wpp.group.iAmAdmin({json.dumps(group_id)})"
 
     @classmethod
     def group_i_am_super_admin(cls, group_id: str) -> str:
         """Check if you are the super-admin (creator) of this group."""
-        return f"wpp.group.iAmSuperAdmin('{group_id}')"
+        return f"wpp.group.iAmSuperAdmin({json.dumps(group_id)})"
 
     @classmethod
     def group_get_size_limit(cls) -> str:
@@ -854,7 +860,7 @@ class WAJS_Scripts:
     @classmethod
     def blocklist_is_blocked(cls, contact_id: str) -> str:
         """Check if a specific contact is blocked."""
-        return f"wpp.blocklist.isBlocked('{contact_id}')"
+        return f"wpp.blocklist.isBlocked({json.dumps(contact_id)})"
 
     # ─────────────────────────────────────────────
     # 11. STATUS / STORIES (READ)
@@ -865,7 +871,7 @@ class WAJS_Scripts:
         """Get a contact's WhatsApp Status (Story) entries. Returns empty list if none or blocked."""
         return f"""
             Promise.race([
-                wpp.status.get('{contact_id}'),
+                wpp.status.get({json.dumps(contact_id)}),
                 new Promise(resolve => setTimeout(() => resolve([]), 3000))
             ])
         """
@@ -925,7 +931,7 @@ class WAJS_Scripts:
     @classmethod
     def labels_get_by_id(cls, label_id: str) -> str:
         """Get a specific label by its ID."""
-        return f"wpp.labels.getLabelById('{label_id}')"
+        return f"wpp.labels.getLabelById({json.dumps(label_id)})"
 
     # ─────────────────────────────────────────────
     # 15. COMMUNITY (READ)
@@ -934,17 +940,17 @@ class WAJS_Scripts:
     @classmethod
     def community_get_subgroups(cls, community_id: str) -> str:
         """Child group chats of a Community."""
-        return f"wpp.community.getSubgroups('{community_id}')"
+        return f"wpp.community.getSubgroups({json.dumps(community_id)})"
 
     @classmethod
     def community_get_participants(cls, community_id: str) -> str:
         """All members across a Community."""
-        return f"wpp.community.getParticipants('{community_id}')"
+        return f"wpp.community.getParticipants({json.dumps(community_id)})"
 
     @classmethod
     def community_get_announcement_group(cls, community_id: str) -> str:
         """The admin broadcast/announcement group of a Community."""
-        return f"wpp.community.getAnnouncementGroup('{community_id}')"
+        return f"wpp.community.getAnnouncementGroup({json.dumps(community_id)})"
 
     # ═══════════════════════════════════════════════════════════
     # ACTION-LEVEL — MUTATIONS & INTERACTIONS (OPTIONAL / TIER 3)
@@ -978,7 +984,7 @@ class WAJS_Scripts:
     @classmethod
     def conn_set_theme(cls, theme: str) -> str:
         """Set UI theme. Values: 'default' | 'dark'."""
-        return f"wpp.conn.setTheme('{theme}')"
+        return f"wpp.conn.setTheme({json.dumps(theme)})"
 
     # ─────────────────────────────────────────────
     # CONTACT (ACTIONS)
@@ -987,28 +993,28 @@ class WAJS_Scripts:
     @classmethod
     def contact_subscribe_presence(cls, contact_id: str) -> str:
         """Start receiving presence events for a contact."""
-        return f"wpp.contact.subscribePresence('{contact_id}')"
+        return f"wpp.contact.subscribePresence({json.dumps(contact_id)})"
 
     @classmethod
     def contact_unsubscribe_presence(cls, contact_id: str) -> str:
         """Stop receiving presence events for a contact."""
-        return f"wpp.contact.unsubscribePresence('{contact_id}')"
+        return f"wpp.contact.unsubscribePresence({json.dumps(contact_id)})"
 
     @classmethod
     def contact_save(cls, contact_id: str, name: str) -> str:
         """Save or update a contact's display name."""
         safe_name = json.dumps(name)
-        return f"wpp.contact.save('{contact_id}', {safe_name})"
+        return f"wpp.contact.save({json.dumps(contact_id)}, {safe_name})"
 
     @classmethod
     def contact_remove(cls, contact_id: str) -> str:
         """Delete a contact from your address book."""
-        return f"wpp.contact.remove('{contact_id}')"
+        return f"wpp.contact.remove({json.dumps(contact_id)})"
 
     @classmethod
     def contact_report(cls, contact_id: str) -> str:
         """Report a contact to Meta."""
-        return f"wpp.contact.reportContact('{contact_id}')"
+        return f"wpp.contact.reportContact({json.dumps(contact_id)})"
 
     # ─────────────────────────────────────────────
     # GROUP (ACTIONS)
@@ -1025,64 +1031,64 @@ class WAJS_Scripts:
     def group_add_participants(cls, group_id: str, participants: list) -> str:
         """Add members to a group."""
         safe_parts = json.dumps(participants)
-        return f"wpp.group.addParticipants('{group_id}', {safe_parts})"
+        return f"wpp.group.addParticipants({json.dumps(group_id)}, {safe_parts})"
 
     @classmethod
     def group_remove_participants(cls, group_id: str, participants: list) -> str:
         """Remove members from a group."""
         safe_parts = json.dumps(participants)
-        return f"wpp.group.removeParticipants('{group_id}', {safe_parts})"
+        return f"wpp.group.removeParticipants({json.dumps(group_id)}, {safe_parts})"
 
     @classmethod
     def group_promote_participants(cls, group_id: str, participants: list) -> str:
         """Promote members to admin."""
         safe_parts = json.dumps(participants)
-        return f"wpp.group.promoteParticipants('{group_id}', {safe_parts})"
+        return f"wpp.group.promoteParticipants({json.dumps(group_id)}, {safe_parts})"
 
     @classmethod
     def group_demote_participants(cls, group_id: str, participants: list) -> str:
         """Remove admin from members."""
         safe_parts = json.dumps(participants)
-        return f"wpp.group.demoteParticipants('{group_id}', {safe_parts})"
+        return f"wpp.group.demoteParticipants({json.dumps(group_id)}, {safe_parts})"
 
     @classmethod
     def group_leave(cls, group_id: str) -> str:
         """Leave a group chat."""
-        return f"wpp.group.leave('{group_id}')"
+        return f"wpp.group.leave({json.dumps(group_id)})"
 
     @classmethod
     def group_join(cls, invite_code: str) -> str:
         """Join a group via invite link code."""
-        return f"wpp.group.join('{invite_code}')"
+        return f"wpp.group.join({json.dumps(invite_code)})"
 
     @classmethod
     def group_set_subject(cls, group_id: str, name: str) -> str:
         """Rename a group."""
         safe_name = json.dumps(name)
-        return f"wpp.group.setSubject('{group_id}', {safe_name})"
+        return f"wpp.group.setSubject({json.dumps(group_id)}, {safe_name})"
 
     @classmethod
     def group_set_description(cls, group_id: str, text: str) -> str:
         """Set the group description."""
         safe_text = json.dumps(text)
-        return f"wpp.group.setDescription('{group_id}', {safe_text})"
+        return f"wpp.group.setDescription({json.dumps(group_id)}, {safe_text})"
 
     @classmethod
     def group_revoke_invite_code(cls, group_id: str) -> str:
         """Revoke the current invite link."""
-        return f"wpp.group.revokeInviteCode('{group_id}')"
+        return f"wpp.group.revokeInviteCode({json.dumps(group_id)})"
 
     @classmethod
     def group_approve_membership(cls, group_id: str, participants: list) -> str:
         """Approve pending join requests."""
         safe_parts = json.dumps(participants)
-        return f"wpp.group.approve('{group_id}', {safe_parts})"
+        return f"wpp.group.approve({json.dumps(group_id)}, {safe_parts})"
 
     @classmethod
     def group_reject_membership(cls, group_id: str, participants: list) -> str:
         """Reject pending join requests."""
         safe_parts = json.dumps(participants)
-        return f"wpp.group.reject('{group_id}', {safe_parts})"
+        return f"wpp.group.reject({json.dumps(group_id)}, {safe_parts})"
 
     # ─────────────────────────────────────────────
     # BLOCKLIST (ACTIONS)
@@ -1091,12 +1097,12 @@ class WAJS_Scripts:
     @classmethod
     def blocklist_block(cls, contact_id: str) -> str:
         """Block a contact."""
-        return f"wpp.blocklist.blockContact('{contact_id}')"
+        return f"wpp.blocklist.blockContact({json.dumps(contact_id)})"
 
     @classmethod
     def blocklist_unblock(cls, contact_id: str) -> str:
         """Unblock a contact."""
-        return f"wpp.blocklist.unblockContact('{contact_id}')"
+        return f"wpp.blocklist.unblockContact({json.dumps(contact_id)})"
 
     # ─────────────────────────────────────────────
     # STATUS (ACTIONS)
@@ -1112,12 +1118,12 @@ class WAJS_Scripts:
     @classmethod
     def status_send_read(cls, msg_id: str) -> str:
         """Mark a Status story as viewed."""
-        return f"wpp.status.sendReadStatus('{msg_id}')"
+        return f"wpp.status.sendReadStatus({json.dumps(msg_id)})"
 
     @classmethod
     def status_remove(cls, msg_id: str) -> str:
         """Delete one of your own Status stories."""
-        return f"wpp.status.remove('{msg_id}')"
+        return f"wpp.status.remove({json.dumps(msg_id)})"
 
     # ─────────────────────────────────────────────
     # PROFILE (ACTIONS)
@@ -1147,32 +1153,32 @@ class WAJS_Scripts:
     @classmethod
     def privacy_set_last_seen(cls, value: str) -> str:
         """Who can see Last Seen. Values: 'all'|'contacts'|'contact_blacklist'|'none'."""
-        return f"wpp.privacy.setLastSeen('{value}')"
+        return f"wpp.privacy.setLastSeen({json.dumps(value)})"
 
     @classmethod
     def privacy_set_online(cls, value: str) -> str:
         """Who can see Online status. Values: 'all'|'match_last_seen'."""
-        return f"wpp.privacy.setOnline('{value}')"
+        return f"wpp.privacy.setOnline({json.dumps(value)})"
 
     @classmethod
     def privacy_set_profile_pic(cls, value: str) -> str:
         """Who can see your profile picture."""
-        return f"wpp.privacy.setProfilePic('{value}')"
+        return f"wpp.privacy.setProfilePic({json.dumps(value)})"
 
     @classmethod
     def privacy_set_read_receipts(cls, value: str) -> str:
         """Enable/disable blue ticks. Values: 'all'|'none'."""
-        return f"wpp.privacy.setReadReceipts('{value}')"
+        return f"wpp.privacy.setReadReceipts({json.dumps(value)})"
 
     @classmethod
     def privacy_set_add_group(cls, value: str) -> str:
         """Who can add you to groups."""
-        return f"wpp.privacy.setAddGroup('{value}')"
+        return f"wpp.privacy.setAddGroup({json.dumps(value)})"
 
     @classmethod
     def privacy_set_status(cls, value: str) -> str:
         """Who can see your Status stories."""
-        return f"wpp.privacy.setStatus('{value}')"
+        return f"wpp.privacy.setStatus({json.dumps(value)})"
 
     # ─────────────────────────────────────────────
     # LABELS (ACTIONS) — Business accounts only
@@ -1188,13 +1194,13 @@ class WAJS_Scripts:
     @classmethod
     def labels_delete(cls, label_id: str) -> str:
         """Delete a label."""
-        return f"wpp.labels.deleteLabel('{label_id}')"
+        return f"wpp.labels.deleteLabel({json.dumps(label_id)})"
 
     @classmethod
     def labels_apply(cls, chat_id: str, label_ids: list) -> str:
         """Apply labels to a chat."""
         safe_ids = json.dumps(label_ids)
-        return f"wpp.labels.addOrRemoveLabels('{chat_id}', {safe_ids})"
+        return f"wpp.labels.addOrRemoveLabels({json.dumps(chat_id)}, {safe_ids})"
 
     # ─────────────────────────────────────────────
     # CALL (ACTIONS)
@@ -1204,22 +1210,22 @@ class WAJS_Scripts:
     def call_offer(cls, contact_id: str, is_video: bool = False) -> str:
         """Initiate a voice or video call."""
         opts = json.dumps({"isVideo": is_video})
-        return f"wpp.call.offer('{contact_id}', {opts})"
+        return f"wpp.call.offer({json.dumps(contact_id)}, {opts})"
 
     @classmethod
     def call_accept(cls, call_id: str) -> str:
         """Accept an incoming call."""
-        return f"wpp.call.accept('{call_id}')"
+        return f"wpp.call.accept({json.dumps(call_id)})"
 
     @classmethod
     def call_reject(cls, call_id: str) -> str:
         """Reject an incoming call."""
-        return f"wpp.call.reject('{call_id}')"
+        return f"wpp.call.reject({json.dumps(call_id)})"
 
     @classmethod
     def call_end(cls, call_id: str) -> str:
         """End an active call."""
-        return f"wpp.call.end('{call_id}')"
+        return f"wpp.call.end({json.dumps(call_id)})"
 
     # ─────────────────────────────────────────────
     # COMMUNITY (ACTIONS)
@@ -1235,19 +1241,19 @@ class WAJS_Scripts:
     @classmethod
     def community_deactivate(cls, community_id: str) -> str:
         """Deactivate / close a Community."""
-        return f"wpp.community.deactivate('{community_id}')"
+        return f"wpp.community.deactivate({json.dumps(community_id)})"
 
     @classmethod
     def community_add_subgroups(cls, community_id: str, group_ids: list) -> str:
         """Add groups to an existing Community."""
         safe_ids = json.dumps(group_ids)
-        return f"wpp.community.addSubgroups('{community_id}', {safe_ids})"
+        return f"wpp.community.addSubgroups({json.dumps(community_id)}, {safe_ids})"
 
     @classmethod
     def community_remove_subgroups(cls, community_id: str, group_ids: list) -> str:
         """Remove groups from a Community."""
         safe_ids = json.dumps(group_ids)
-        return f"wpp.community.removeSubgroups('{community_id}', {safe_ids})"
+        return f"wpp.community.removeSubgroups({json.dumps(community_id)}, {safe_ids})"
 
     # ─────────────────────────────────────────────
     # MEDIA DECRYPTION
@@ -1292,7 +1298,8 @@ class WAJS_Scripts:
     @classmethod
     def mark_is_composing(cls, chat_id: str, duration_ms: int = 3000) -> str:
         """Sends typing state to the chat."""
-        return f"wpp.chat.markIsComposing('{chat_id}', {duration_ms}).then(() => true)"
+        safe_duration = int(duration_ms)
+        return f"wpp.chat.markIsComposing({json.dumps(chat_id)}, {safe_duration}).then(() => true)"
 
     @classmethod
     def decrypt_media(cls, direct_path: str, media_key_b64: str, media_type: str) -> str:

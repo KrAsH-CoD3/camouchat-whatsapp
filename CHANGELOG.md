@@ -14,6 +14,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Readme.md` updated with Competitor Matrix.
 - updated internal `page` & `wapisession` to be mandatory for cleaner visibility.
 
+### Security
+
+- Fixed JavaScript injection in `WAJS_Scripts`. Caller-supplied identifiers (`chat_id`,
+  `contact_id`, `group_id`, `invite_code`, `newsletter_id`, `label_id`, `community_id`,
+  `call_id`, `msg_id`, `theme`, `value`) were spliced into single-quoted JS string
+  literals, so a crafted JID containing a single quote could close the literal early and
+  execute arbitrary JS inside the authenticated WhatsApp Web context. All 65 call sites
+  now embed values via `json.dumps()`. Regression tests added in
+  `tests/unit/WhatsApp/test_wajs_scripts.py`.
+
 ---
 
 ## [0.7.3] — 2026-05-03
