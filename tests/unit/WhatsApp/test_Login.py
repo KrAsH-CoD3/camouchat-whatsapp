@@ -17,7 +17,7 @@ from playwright.async_api import (
     TimeoutError as PlaywrightTimeoutError,
 )
 
-from camouchat_whatsapp.core.login import Login
+from camouchat_whatsapp.core.login import Login, _redact_login_code
 from camouchat_whatsapp.core.web_ui_config import WebSelectorConfig
 from camouchat_whatsapp.exceptions import LoginError
 
@@ -270,3 +270,93 @@ async def test_code_login_timeout(login_instance, tmp_path):
         await login_instance.login(
             method=1, number=123, country="Ind", save_path=tmp_path / "f.json"
         )
+
+
+# ============================================================================
+# Pairing-code logging (security)
+# ============================================================================
+
+PAIRING_CODE = "ABC-123"
+
+
+def _prime_code_login(login_instance, code: str):
+    """Wire the UI mocks so login(method=1) reaches the code-display step."""
+    mock_role_btn = AsyncMock(spec=Locator)
+    mock_role_btn.count.return_value = 1
+    login_instance.ui_config.link_phone_number_button.return_value = mock_role_btn
+
+    mock_chevron = AsyncMock(spec=Locator)
+    login_instance.ui_config.country_selector_button.return_value = mock_chevron
+
+    mock_countries = AsyncMock(spec=Locator)
+    mock_countries.count.return_value = 1
+    mock_country_item = AsyncMock(spec=Locator)
+    mock_country_item.inner_text.return_value = "India"
+    mock_countries.nth.return_value = mock_country_item
+    login_instance.ui_config.country_list_items.return_value = mock_countries
+
+    mock_input = AsyncMock(spec=Locator)
+    mock_input.count.return_value = 1
+    login_instance.ui_config.phone_number_input.return_value = mock_input
+
+    mock_code_el = AsyncMock(spec=Locator)
+    mock_code_el.wait_for = AsyncMock()
+    mock_code_el.get_attribute.return_value = code
+    login_instance.ui_config.link_code_container.return_value = mock_code_el
+
+
+def _rendered(log_mock, level: str) -> str:
+    """Flatten every recorded call for one log level into a single string."""
+    return " ".join(
+        str(arg) for call in getattr(log_mock, level).call_args_list for arg in call.args
+    )
+
+
+def test_redact_login_code_masks_everything_after_the_prefix():
+    assert _redact_login_code(PAIRING_CODE) == "AB*****"
+
+
+def test_redact_login_code_fully_masks_short_codes():
+    assert _redact_login_code("A") == "*"
+    assert _redact_login_code("AB") == "**"
+
+
+@pytest.mark.asyncio
+async def test_code_login_does_not_log_the_raw_code_at_info(login_instance, tmp_path):
+    """The pairing code is a credential; INFO must never carry it in the clear."""
+    _prime_code_login(login_instance, PAIRING_CODE)
+
+    await login_instance.login(
+        method=1, number=1234567890, country="India", save_path=tmp_path / "new.json"
+    )
+
+    rendered = _rendered(login_instance.log, "info")
+    assert PAIRING_CODE not in rendered
+    assert "AB*****" in rendered
+
+
+@pytest.mark.asyncio
+async def test_code_login_logs_the_full_code_at_debug(login_instance, tmp_path):
+    """Headless/Docker setups can still retrieve the code by enabling DEBUG."""
+    _prime_code_login(login_instance, PAIRING_CODE)
+
+    await login_instance.login(
+        method=1, number=1234567890, country="India", save_path=tmp_path / "new.json"
+    )
+
+    assert PAIRING_CODE in _rendered(login_instance.log, "debug")
+
+
+@pytest.mark.asyncio
+async def test_docker_hint_points_at_debug_not_the_logs(login_instance, tmp_path, monkeypatch):
+    """The Docker hint must not promise a code that INFO no longer prints."""
+    monkeypatch.setenv("CAMOUCHAT_DOCKER", "1")
+    _prime_code_login(login_instance, PAIRING_CODE)
+
+    await login_instance.login(
+        method=1, number=1234567890, country="India", save_path=tmp_path / "new.json"
+    )
+
+    rendered = _rendered(login_instance.log, "info")
+    assert "DEBUG" in rendered
+    assert "Check docker logs" not in rendered

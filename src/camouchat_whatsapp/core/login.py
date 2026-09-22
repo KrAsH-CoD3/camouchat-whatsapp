@@ -27,6 +27,19 @@ from camouchat_whatsapp.logger import w_logger
 from .web_ui_config import WebSelectorConfig
 
 
+def _redact_login_code(code: str) -> str:
+    """
+    Mask a WhatsApp pairing code for log output.
+
+    The pairing code is a one-time credential that links a device to the account,
+    so it must not reach an INFO-level log sink in the clear. A short prefix is
+    kept for log correlation; the remainder is masked.
+    """
+    if len(code) <= 2:
+        return "*" * len(code)
+    return f"{code[:2]}{'*' * (len(code) - 2)}"
+
+
 class Login(LoginProtocol):
     """Handles WhatsApp Web authentication via QR code or phone number."""
 
@@ -119,7 +132,7 @@ class Login(LoginProtocol):
             if in_docker:
                 self.log.info(
                     "Docker environment detected — using phone code login. "
-                    "Check docker logs for the pairing code."
+                    "Set the log level to DEBUG to print the pairing code."
                 )
         else:
             method = int(kwargs["method"])
@@ -247,7 +260,13 @@ class Login(LoginProtocol):
             code = await code_el.get_attribute("data-link-code")
             if not code:
                 raise LoginError("Login code missing.")
-            self.log.info("WhatsApp Login Code: %s", code)
+            # The pairing code is a one-time credential. INFO stays redacted;
+            # DEBUG prints it in full for headless/Docker setups with no QR to scan.
+            self.log.info(
+                "WhatsApp Login Code: %s (set the log level to DEBUG to print it in full)",
+                _redact_login_code(code),
+            )
+            self.log.debug("WhatsApp Login Code: %s", code)
         except PlaywrightTimeoutError as e:
             raise LoginError("Timeout while waiting for login code.") from e
 

@@ -31,6 +31,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   attacker-influenced `id_serialized` and `type` fields of a `MsgModel` dump. A crafted
   `type` such as `../../../etc/cron.d/x` previously produced a traversing filename.
   Filenames generated from ordinary identifiers are unchanged.
+- The WhatsApp pairing code is no longer written to INFO-level logs in the clear. It is a
+  one-time credential that links a device to the account, so INFO now records a redacted
+  form (`AB*****`) and the full code is emitted at DEBUG only. Headless/Docker setups that
+  cannot scan a QR code should enable DEBUG logging to read the code; the Docker startup
+  hint was updated to say so.
 
 ---
 
