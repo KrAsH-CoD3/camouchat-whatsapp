@@ -7,6 +7,7 @@ import logging
 from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
+from camouchat_browser import ProfileInfo
 from camouchat_core import MediaType
 from playwright.async_api import (
     FileChooser,
@@ -17,6 +18,7 @@ from playwright.async_api import (
     TimeoutError as PlaywrightTimeoutError,
 )
 
+from camouchat_whatsapp.api import WapiSession
 from camouchat_whatsapp.core import WebSelectorConfig
 from camouchat_whatsapp.exceptions import WhatsappMediaError
 from camouchat_whatsapp.features.media_controller import FileTyped, MediaController
@@ -52,8 +54,26 @@ def mock_ui_config():
 
 
 @pytest.fixture
-def media_capable_instance(mock_page, mock_logger, mock_ui_config):
-    return MediaController(page=mock_page, log=mock_logger, ui_config=mock_ui_config)
+def mock_wapi():
+    return AsyncMock(spec=WapiSession)
+
+
+@pytest.fixture
+def mock_profile():
+    profile = Mock(spec=ProfileInfo)
+    profile.is_active = False
+    return profile
+
+
+@pytest.fixture
+def media_capable_instance(mock_page, mock_wapi, mock_profile, mock_logger, mock_ui_config):
+    return MediaController(
+        page=mock_page,
+        wapi=mock_wapi,
+        profile=mock_profile,
+        log=mock_logger,
+        ui_config=mock_ui_config,
+    )
 
 
 # ============================================================================
@@ -62,9 +82,11 @@ def media_capable_instance(mock_page, mock_logger, mock_ui_config):
 
 
 @pytest.mark.asyncio
-async def test_init_page_none(mock_logger, mock_ui_config):
-    with pytest.raises(ValueError, match="Page must not be None."):
-        MediaController(page=None, log=mock_logger, ui_config=mock_ui_config)
+async def test_init_page_none(mock_wapi, mock_profile, mock_logger):
+    # ui_config is deliberately omitted: the controller builds a WebSelectorConfig
+    # from the page, which is what rejects a None page.
+    with pytest.raises(ValueError, match="page must not be None"):
+        MediaController(page=None, wapi=mock_wapi, profile=mock_profile, log=mock_logger)
 
 
 @pytest.mark.asyncio

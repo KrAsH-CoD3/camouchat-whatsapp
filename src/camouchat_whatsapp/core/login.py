@@ -116,12 +116,8 @@ class Login(LoginProtocol):
         """
         in_docker = self._is_docker()
 
-        number: int | str | None = (
-            kwargs.get("number") or os.getenv("WA_PHONE_NUMBER")
-        )
-        country: str | None = (
-            kwargs.get("country") or os.getenv("WA_COUNTRY")
-        )
+        number: int | str | None = kwargs.get("number") or os.getenv("WA_PHONE_NUMBER")
+        country: str | None = kwargs.get("country") or os.getenv("WA_COUNTRY")
         wait_time: int = kwargs.get("wait_time", 180_000)
         link: str = kwargs.get("url", "https://web.whatsapp.com")
 
@@ -167,14 +163,10 @@ class Login(LoginProtocol):
         elif method == 1:
             success = await self.__code_login(number, country)
         else:
-            raise LoginError(
-                "Invalid login method. Use method=0 (QR) or method=1 (Code)."
-            )
+            raise LoginError("Invalid login method. Use method=0 (QR) or method=1 (Code).")
 
         if success:
-            self.log.info(
-                "WhatsApp login session stored via persistent context."
-            )
+            self.log.info("WhatsApp login session stored via persistent context.")
 
         return success
 
@@ -191,9 +183,7 @@ class Login(LoginProtocol):
         except PlaywrightTimeoutError as e:
             raise LoginError("QR login timeout.") from e
 
-    async def __code_login(
-        self, number: int | str | None, country: str | None
-    ) -> bool:
+    async def __code_login(self, number: int | str | None, country: str | None) -> bool:
         """Perform phone number based login with linking code."""
         if not number or not country:
             hint = (
@@ -201,9 +191,7 @@ class Login(LoginProtocol):
                 if self._is_docker()
                 else " Pass number= and country= to login()."
             )
-            raise LoginError(
-                "Both number and country are required for code login." + hint
-            )
+            raise LoginError("Both number and country are required for code login." + hint)
 
         self.log.info("Starting code-based login...")
 

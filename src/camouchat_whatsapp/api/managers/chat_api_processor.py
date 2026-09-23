@@ -12,6 +12,7 @@ from camouchat_whatsapp.api.models import ChatModelAPI
 from camouchat_whatsapp.api.wa_js import WAJS_Scripts, WapiWrapper
 from camouchat_whatsapp.logger import w_logger
 
+
 class ChatApiManager(ChatProcessorProtocol[ChatModelAPI]):
     def __init__(
         self,

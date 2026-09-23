@@ -10,6 +10,7 @@ import pytest
 from playwright.async_api import Locator, Page
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
+from camouchat_whatsapp.api import WapiSession
 from camouchat_whatsapp.core.web_ui_config import WebSelectorConfig
 from camouchat_whatsapp.exceptions import WhatsAppInteractionError
 from camouchat_whatsapp.features.interaction_controller import (
@@ -41,10 +42,15 @@ def mock_ui_config():
 
 
 @pytest.fixture
-def humanize_fixture(mock_page, mock_logger, mock_ui_config):
+def mock_wapi():
+    return AsyncMock(spec=WapiSession)
+
+
+@pytest.fixture
+def humanize_fixture(mock_page, mock_wapi, mock_logger, mock_ui_config):
     with patch("camouchat_whatsapp.features.interaction_controller.pyperclip") as mock_clip:
         humanize = HumanInteractionController(
-            page=mock_page, log=mock_logger, ui_config=mock_ui_config
+            page=mock_page, wapi=mock_wapi, log=mock_logger, ui_config=mock_ui_config
         )
         yield humanize, mock_clip
 
@@ -55,9 +61,11 @@ def humanize_fixture(mock_page, mock_logger, mock_ui_config):
 
 
 @pytest.mark.asyncio
-async def test_init_page_none(mock_logger, mock_ui_config):
+async def test_init_page_none(mock_wapi, mock_logger):
+    # ui_config is deliberately omitted: the controller builds a WebSelectorConfig
+    # from the page, which is what rejects a None page.
     with pytest.raises(ValueError, match="page must not be None"):
-        HumanInteractionController(page=None, log=mock_logger, ui_config=mock_ui_config)
+        HumanInteractionController(page=None, wapi=mock_wapi, log=mock_logger)
 
 
 @pytest.mark.asyncio

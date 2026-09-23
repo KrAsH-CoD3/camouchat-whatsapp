@@ -62,9 +62,11 @@ def login_instance(mock_page, mock_profile, mock_ui_config, mock_logger):
 
 
 @pytest.mark.asyncio
-async def test_init_page_none(mock_logger, mock_profile, mock_ui_config):
+async def test_init_page_none(mock_logger, mock_profile):
+    # ui_config is deliberately omitted: Login builds a WebSelectorConfig from
+    # the page, which is what rejects a None page.
     with pytest.raises(ValueError, match="page must not be None"):
-        Login(page=None, profile=mock_profile, ui_config=mock_ui_config, log=mock_logger)
+        Login(page=None, profile=mock_profile, log=mock_logger)
 
 
 @pytest.mark.asyncio
