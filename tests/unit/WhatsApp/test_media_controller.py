@@ -55,7 +55,11 @@ def mock_ui_config():
 
 @pytest.fixture
 def mock_wapi():
-    return AsyncMock(spec=WapiSession)
+@pytest.fixture
+def mock_wapi():
+    mock = AsyncMock(spec=WapiSession)
+    mock.bridge = AsyncMock()
+    return mock
 
 
 @pytest.fixture
