@@ -40,9 +40,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Windows drive separator: a crafted `type` of `D:` previously produced a drive-relative
   filename that discarded the destination directory outright, and `../../../etc/cron.d/x`
   produced a traversing one. Filenames generated from ordinary identifiers are unchanged.
-- `extract_media()` and `decrypt_media()` now report the destination actually written rather
-  than the literal argument, so a `~/...` path no longer reports a location that does not
-  exist.
+- `WapiWrapper.extract_media()` returns and `WapiWrapper.decrypt_media()` logs the resolved
+  destination, so a `~/...` path is not reported literally.
 - The WhatsApp pairing code is no longer written to INFO-level logs in any form. It is a
   one-time credential that links a device to the account, so INFO records only a full mask
   and the complete code is emitted at DEBUG only. No part of the value is retained for log
