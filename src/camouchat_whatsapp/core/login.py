@@ -32,12 +32,12 @@ def _redact_login_code(code: str) -> str:
     Mask a WhatsApp pairing code for log output.
 
     The pairing code is a one-time credential that links a device to the account,
-    so it must not reach an INFO-level log sink in the clear. A short prefix is
-    kept for log correlation; the remainder is masked.
+    so no part of it may reach an INFO-level log sink: log stores and aggregation
+    dashboards routinely outlive the code's validity window. Masking the whole
+    value costs nothing, because the surrounding log line still identifies the
+    event for correlation. The full code is emitted at DEBUG only.
     """
-    if len(code) <= 2:
-        return "*" * len(code)
-    return f"{code[:2]}{'*' * (len(code) - 2)}"
+    return "*" * len(code)
 
 
 class Login(LoginProtocol):

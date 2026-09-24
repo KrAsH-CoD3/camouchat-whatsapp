@@ -55,8 +55,8 @@ def mock_ui_config():
 
 @pytest.fixture
 def mock_wapi():
-@pytest.fixture
-def mock_wapi():
+    """WapiSession stand-in. ``bridge`` is a bare AsyncMock, so a test that exercises
+    ``save_media`` must set the specific bridge method it needs."""
     mock = AsyncMock(spec=WapiSession)
     mock.bridge = AsyncMock()
     return mock

@@ -314,8 +314,13 @@ def _rendered(log_mock, level: str) -> str:
     )
 
 
-def test_redact_login_code_masks_everything_after_the_prefix():
-    assert _redact_login_code(PAIRING_CODE) == "AB*****"
+def test_redact_login_code_masks_the_whole_value():
+    """No part of the credential may survive — not even a prefix for correlation."""
+    masked = _redact_login_code(PAIRING_CODE)
+
+    assert masked == "*" * len(PAIRING_CODE)
+    assert "A" not in masked, "first character leaked"
+    assert "B" not in masked, "second character leaked"
 
 
 def test_redact_login_code_fully_masks_short_codes():
@@ -334,7 +339,7 @@ async def test_code_login_does_not_log_the_raw_code_at_info(login_instance, tmp_
 
     rendered = _rendered(login_instance.log, "info")
     assert PAIRING_CODE not in rendered
-    assert "AB*****" in rendered
+    assert "*" * len(PAIRING_CODE) in rendered
 
 
 @pytest.mark.asyncio
@@ -355,10 +360,12 @@ async def test_docker_hint_points_at_debug_not_the_logs(login_instance, tmp_path
     monkeypatch.setenv("CAMOUCHAT_DOCKER", "1")
     _prime_code_login(login_instance, PAIRING_CODE)
 
-    await login_instance.login(
-        method=1, number=1234567890, country="India", save_path=tmp_path / "new.json"
-    )
+    # method is deliberately omitted. The Docker hint is emitted only on the
+    # auto-detect branch ("method" not in kwargs); passing method=1 would skip the
+    # very branch under test and still pass, off the code-login INFO line instead.
+    await login_instance.login(number=1234567890, country="India", save_path=tmp_path / "new.json")
 
     rendered = _rendered(login_instance.log, "info")
+    assert "Docker environment detected" in rendered, "Docker hint was never emitted"
     assert "DEBUG" in rendered
     assert "Check docker logs" not in rendered

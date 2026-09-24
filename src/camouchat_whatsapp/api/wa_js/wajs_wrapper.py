@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import errno
 import inspect
 import json
 import os
@@ -133,16 +134,20 @@ class WapiWrapper:
     """
 
     # Characters that must never survive into a generated filename: POSIX and
-    # Windows path separators, plus NUL.
-    _UNSAFE_PATH_CHARS = ("/", "\\", "\x00")
+    # Windows path separators, plus NUL. ":" is here because a component like
+    # "D:" is a *drive-relative* path on Windows, so `Path(save_dir) / "D:_x.jpg"`
+    # discards save_dir entirely and lands on the D: drive. It is also illegal in
+    # NTFS filenames.
+    _UNSAFE_PATH_CHARS = ("/", "\\", "\x00", ":")
 
     @staticmethod
     def _safe_filename_component(value: str) -> str:
         """
         Reduce an untrusted string to a single, non-traversing path component.
 
-        Strips NUL bytes, collapses POSIX and Windows path separators, and trims
-        leading/trailing dots so the result can never be ``.`` or ``..``.
+        Strips NUL bytes, collapses POSIX and Windows path separators and the
+        Windows drive separator, and trims leading/trailing dots so the result
+        can never be ``.`` or ``..``.
         """
         cleaned = str(value)
         for ch in WapiWrapper._UNSAFE_PATH_CHARS:
@@ -177,25 +182,77 @@ class WapiWrapper:
         # append one when it is missing; blindly appending would make the prefix "//" and
         # reject every path under a filesystem root.
         prefix = root if root.endswith(os.sep) else root + os.sep
-        if target != root and not target.startswith(prefix):
+        # Compare case-insensitively: macOS APFS and Windows are both case-insensitive by
+        # default, so a destination inside the root but cased differently than media_root
+        # was rejected outright. normcase is a no-op on POSIX. Folding can only widen
+        # acceptance for paths genuinely under the root — it can never permit an escape.
+        n_target, n_root, n_prefix = (
+            os.path.normcase(target),
+            os.path.normcase(root),
+            os.path.normcase(prefix),
+        )
+        if n_target != n_root and not n_target.startswith(n_prefix):
             raise ValueError(
                 f"refusing to write outside media_root: {target!r} is not inside {root!r}"
             )
         return target
 
-    def _save_bytes(self, path: str, data: bytes) -> None:
+    def _save_bytes(self, path: str, data: bytes) -> str:
         """
         Sync helper for writing bytes to disk.
 
         The destination is resolved and validated *before* any directory is
         created, so a caller-supplied ``save_path`` cannot escape ``media_root``.
+
+        The containment check and the write cannot be made a single atomic step
+        portably, so this narrows the race rather than eliminating it:
+
+        * containment is re-validated after ``makedirs`` — a component replaced by a
+          symlink between the two checks is caught, because the second pass resolves
+          it against what is now on disk;
+        * the file is opened with ``O_NOFOLLOW`` where available, so a symlink swapped
+          in at the final component is refused instead of followed.
+
+        A determined local attacker who can replace a path component at exactly the
+        right moment can still win the remaining window. Closing it fully would mean
+        traversing from a trusted root with ``dir_fd`` and ``O_NOFOLLOW`` per
+        component, which is not portable to Windows.
+
+        Returns:
+            The resolved destination that was actually written. This can differ
+            from ``path`` — ``~`` is expanded and the result is made absolute — so
+            any caller that reports a path back to the user must use this value
+            rather than the input.
+
+        Raises:
+            ValueError: if the destination escapes ``media_root``, or if the final
+                component is a symlink (``O_NOFOLLOW``).
         """
         target = self._resolve_media_target(path)
         parent = os.path.dirname(target)
         if parent:
             os.makedirs(parent, exist_ok=True)
-        with open(target, "wb") as f:
-            f.write(data)
+            # Re-check now the parent exists on disk.
+            target = self._resolve_media_target(target)
+
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        try:
+            fd = os.open(target, flags, 0o644)
+        except OSError as e:
+            if hasattr(os, "O_NOFOLLOW") and e.errno == errno.ELOOP:
+                raise ValueError(f"refusing to write through a symlink: {target!r}") from e
+            raise
+
+        try:
+            handle = os.fdopen(fd, "wb")
+        except BaseException:
+            os.close(fd)
+            raise
+        with handle:
+            handle.write(data)
+        return target
 
     def _read_text(self, path: str) -> str:
         """Sync helper for reading text from disk."""
@@ -1016,7 +1073,7 @@ class WapiWrapper:
             await self.page.evaluate(
                 f"mw:(() => {{"
                 f"  const wpp = Object.getOwnPropertyDescriptor(window, '{wpp_key}')?.value;"
-                f"  if (wpp) setTimeout(() => wpp.chat.sendTextMessage('{chat_id}', {safe_msg}, {safe_options}).catch(() => null), 0);"
+                f"  if (wpp) setTimeout(() => wpp.chat.sendTextMessage({json.dumps(chat_id)}, {safe_msg}, {safe_options}).catch(() => null), 0);"
                 f"  else console.warn('[CamouChat] send_text_message: WPP handle missing ({wpp_key})');"
                 f"}})()"
             )
@@ -1122,8 +1179,8 @@ class WapiWrapper:
         raw_bytes = base64.b64decode(b64)
 
         if save_path:
-            await asyncio.to_thread(self._save_bytes, save_path, raw_bytes)
-            self.log.info(f"decrypt_media: Saved {len(raw_bytes):,} bytes → {save_path}")
+            resolved_path = await asyncio.to_thread(self._save_bytes, save_path, raw_bytes)
+            self.log.info(f"decrypt_media: Saved {len(raw_bytes):,} bytes → {resolved_path}")
 
         return raw_bytes
 
@@ -1183,8 +1240,10 @@ class WapiWrapper:
         mimetype = message.get("mimetype") or message.get("mime_type")
         ext = WapiWrapper._ext_from_mime(mimetype, media_type)
         # Both components are attacker-influenced: id_serialized and type come
-        # straight from the MsgModel dump, so neither may carry a path separator.
-        safe_id = WapiWrapper._safe_filename_component(msg_id).replace("@", "_").replace(":", "_")
+        # straight from the MsgModel dump, so neither may carry a path separator
+        # or a drive separator. Both are routed through _safe_filename_component,
+        # which already handles ":" — see _UNSAFE_PATH_CHARS.
+        safe_id = WapiWrapper._safe_filename_component(msg_id).replace("@", "_")
         safe_type = WapiWrapper._safe_filename_component(media_type)
         return str(Path(save_dir) / f"{safe_type}_{safe_id}{ext}")
 
@@ -1264,19 +1323,22 @@ class WapiWrapper:
             self.log.warning(f"extract_media: {result_dict['error']}")
             return result_dict
 
-        await asyncio.to_thread(self._save_bytes, save_path, raw_bytes)
+        resolved_path = await asyncio.to_thread(self._save_bytes, save_path, raw_bytes)
 
         # isCached is derived from JS-native performance.now() timing (<150ms = CACHE)
         source = "CACHE" if is_cached else "NETWORK"
         self.log.info(
-            f"extract_media: [{media_type}] {len(raw_bytes):,} bytes → {save_path} "
+            f"extract_media: [{media_type}] {len(raw_bytes):,} bytes → {resolved_path} "
             f"[{source} | JS:{js_latency_ms:.1f}ms]"
         )
 
         result_dict.update(
             {
                 "success": True,
-                "path": save_path,
+                # The resolved destination, not the caller's literal input: with a
+                # path like "~/file" the bytes land under $HOME, so reporting the
+                # raw argument would hand back a path that does not exist.
+                "path": resolved_path,
                 "size_bytes": len(raw_bytes),
                 "used_fallback": not is_cached,
                 "latency_ms": js_latency_ms,

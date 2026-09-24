@@ -17,25 +17,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 
 - Fixed JavaScript injection in `WAJS_Scripts`. Caller-supplied identifiers (`chat_id`,
-  `contact_id`, `group_id`, `invite_code`, `newsletter_id`, `label_id`, `community_id`,
-  `call_id`, `msg_id`, `theme`, `value`) were spliced into single-quoted JS string
-  literals, so a crafted JID containing a single quote could close the literal early and
-  execute arbitrary JS inside the authenticated WhatsApp Web context. All 65 call sites
-  now embed values via `json.dumps()`. Regression tests added in
-  `tests/unit/WhatsApp/test_wajs_scripts.py`.
+  `contact_id`, `group_id`, `invite_code`, `newsletter_id`, `query`, `label_id`,
+  `community_id`, `call_id`, `msg_id`, `theme`, `value`) were spliced into single-quoted JS
+  string literals, so a crafted JID containing a single quote could close the literal early
+  and execute arbitrary JS inside the authenticated WhatsApp Web context. All 65 call sites
+  in `wajs_scripts.py` now embed values via `json.dumps()`, as does the `send_text_message`
+  fallback in `wajs_wrapper.py` — the same sink had survived there. The numeric parameters
+  are additionally coerced with `int()`, since Python does not enforce type hints at runtime.
+  Regression tests in `tests/unit/WhatsApp/test_wajs_scripts.py` cover every tainted
+  parameter and scan both modules for the raw-interpolation pattern.
 - Hardened media file writes against path traversal. `WapiWrapper._save_bytes()` now
   resolves its destination and refuses any path that escapes a configured `media_root`,
   raising `ValueError` before any directory is created. The `media_root` argument is
-  optional and validated on construction, so existing callers are unaffected.
+  optional and is resolved on construction and enforced on write, so existing callers are
+  unaffected. The containment comparison is case-insensitive, matching the default behaviour
+  of macOS and Windows filesystems.
 - `WapiWrapper.media_save_path()` now neutralises path separators in the
-  attacker-influenced `id_serialized` and `type` fields of a `MsgModel` dump. A crafted
-  `type` such as `../../../etc/cron.d/x` previously produced a traversing filename.
-  Filenames generated from ordinary identifiers are unchanged.
-- The WhatsApp pairing code is no longer written to INFO-level logs in the clear. It is a
-  one-time credential that links a device to the account, so INFO now records a redacted
-  form (`AB*****`) and the full code is emitted at DEBUG only. Headless/Docker setups that
-  cannot scan a QR code should enable DEBUG logging to read the code; the Docker startup
-  hint was updated to say so.
+  attacker-influenced `id_serialized` and `type` fields of a `MsgModel` dump, including the
+  Windows drive separator: a crafted `type` of `D:` previously produced a drive-relative
+  filename that discarded the destination directory outright, and `../../../etc/cron.d/x`
+  produced a traversing one. Filenames generated from ordinary identifiers are unchanged.
+- `extract_media()` and `decrypt_media()` now report the destination actually written rather
+  than the literal argument, so a `~/...` path no longer reports a location that does not
+  exist.
+- The WhatsApp pairing code is no longer written to INFO-level logs in any form. It is a
+  one-time credential that links a device to the account, so INFO records only a full mask
+  and the complete code is emitted at DEBUG only. No part of the value is retained for log
+  correlation, because the surrounding log line already identifies the event. Headless/Docker
+  setups that cannot scan a QR code should enable DEBUG logging to read the code; the Docker
+  startup hint was updated to say so.
 
 ---
 

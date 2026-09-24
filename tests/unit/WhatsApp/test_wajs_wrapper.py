@@ -1,5 +1,5 @@
 import os
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -198,6 +198,34 @@ def test_save_bytes_rejects_symlink_escape(tmp_path, mock_page):
     assert not (outside / "escaped.bin").exists()
 
 
+def test_save_bytes_rejects_symlink_at_final_component(tmp_path, mock_page, monkeypatch):
+    """O_NOFOLLOW: a symlink swapped in at the final component is refused, not followed.
+
+    The race itself cannot be reproduced deterministically, so bypass the resolve
+    step to hand ``_save_bytes`` a destination whose final component is already a
+    symlink — the state the race would produce.
+    """
+    if not hasattr(os, "O_NOFOLLOW"):
+        pytest.skip("O_NOFOLLOW unavailable on this platform")
+
+    real = tmp_path / "real.bin"
+    real.write_bytes(b"original")
+    link = tmp_path / "link.bin"
+    try:
+        link.symlink_to(real)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks unavailable on this platform")
+
+    wrapper = WapiWrapper(mock_page)
+    # Identity resolve: emulate the window where the symlink appears after validation.
+    monkeypatch.setattr(wrapper, "_resolve_media_target", lambda p: p)
+
+    with pytest.raises(ValueError, match="symlink"):
+        wrapper._save_bytes(str(link), b"payload")
+
+    assert real.read_bytes() == b"original", "the write followed the symlink"
+
+
 def test_save_bytes_rejects_nul_byte(tmp_path, mock_page):
     wrapper = WapiWrapper(mock_page, media_root=tmp_path)
 
@@ -213,6 +241,37 @@ def test_save_bytes_handles_bare_filename(tmp_path, mock_page, monkeypatch):
     wrapper._save_bytes("bare.bin", b"payload")
 
     assert (tmp_path / "bare.bin").read_bytes() == b"payload"
+
+
+def test_save_bytes_returns_the_resolved_destination(tmp_path, mock_page, monkeypatch):
+    """Callers that report a path must get the real one, not the literal argument.
+
+    A relative path is resolved against the CWD, so reporting the input back to
+    the user would name a location that does not exist.
+    """
+    monkeypatch.chdir(tmp_path)
+    wrapper = WapiWrapper(mock_page)
+
+    returned = wrapper._save_bytes("nested/rel.bin", b"payload")
+
+    assert Path(returned).is_absolute()
+    assert Path(returned) == (tmp_path / "nested" / "rel.bin").resolve()
+    assert Path(returned).read_bytes() == b"payload"
+
+
+def test_save_bytes_expands_user_in_the_returned_path(tmp_path, mock_page, monkeypatch):
+    """`~/file` is written under $HOME, so the reported path must say so."""
+    home = tmp_path / "fakehome"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    wrapper = WapiWrapper(mock_page)
+
+    returned = wrapper._save_bytes("~/tilde.bin", b"payload")
+
+    assert "~" not in returned
+    assert Path(returned) == (home / "tilde.bin").resolve()
+    assert Path(returned).read_bytes() == b"payload"
 
 
 def test_media_save_path_neutralises_traversal_in_media_type(tmp_path):
@@ -233,6 +292,22 @@ def test_media_save_path_neutralises_windows_separator_in_msg_id(tmp_path):
 
     assert Path(result).parent == tmp_path
     assert "\\" not in Path(result).name
+
+
+def test_media_save_path_neutralises_windows_drive_separator(tmp_path):
+    """A "D:" type is drive-relative on Windows and discards save_dir entirely.
+
+    ``Path("C:/media") / "D:_x.jpg"`` resolves to ``D:_x.jpg`` with drive ``D:``,
+    so the write lands outside save_dir. ":" must not survive sanitisation.
+    """
+    message = {"id_serialized": "true_123@c.us_ABC", "type": "D:"}
+
+    result = WapiWrapper.media_save_path(message, str(tmp_path))
+
+    assert Path(result).parent == tmp_path
+    assert ":" not in Path(result).name
+    # The decisive check: interpreted as a Windows path, this must stay drive-less.
+    assert PureWindowsPath(result).drive == ""
 
 
 def test_media_save_path_preserves_normal_filenenames(tmp_path):
@@ -278,3 +353,22 @@ def test_media_root_rejects_sibling_prefix(tmp_path, mock_page):
         wrapper._save_bytes(str(sibling / "escaped.bin"), b"x")
 
     assert not (sibling / "escaped.bin").exists()
+
+
+def test_media_root_accepts_differently_cased_path(tmp_path, mock_page, monkeypatch):
+    """Casing must not spuriously reject a path that is inside the root.
+
+    macOS APFS and Windows are case-insensitive by default. ``normcase`` is a no-op
+    on POSIX, so stand in a case-folding implementation to exercise the comparison
+    the way those filesystems present it.
+    """
+    root = tmp_path / "MEDIA_ROOT"
+    root.mkdir()
+    monkeypatch.setattr(os.path, "normcase", str.lower)
+
+    wrapper = WapiWrapper(mock_page, media_root=root)
+
+    # Same directory, different casing.
+    returned = wrapper._save_bytes(str(tmp_path / "media_root" / "f.bin"), b"x")
+
+    assert Path(returned).read_bytes() == b"x"

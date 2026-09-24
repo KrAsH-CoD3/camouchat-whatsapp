@@ -28,6 +28,7 @@ TAINTED_SITES = [
     ("group_get_participants", "group_id"),
     ("group_join", "invite_code"),
     ("newsletter_follow", "newsletter_id"),
+    ("newsletter_search", "query"),
     ("labels_get_by_id", "label_id"),
     ("community_get_subgroups", "community_id"),
     ("call_accept", "call_id"),
@@ -38,14 +39,12 @@ TAINTED_SITES = [
 
 TAINTED_PARAMS = [param for _, param in TAINTED_SITES]
 
-SOURCE = (
-    pathlib.Path(__file__).parents[3]
-    / "src"
-    / "camouchat_whatsapp"
-    / "api"
-    / "wa_js"
-    / "wajs_scripts.py"
-)
+WA_JS_DIR = pathlib.Path(__file__).parents[3] / "src" / "camouchat_whatsapp" / "api" / "wa_js"
+
+# Every module that builds JavaScript by interpolation. Scanning only wajs_scripts.py
+# once let a raw `'{chat_id}'` splice survive in wajs_wrapper.send_text_message's `mw:`
+# fallback while these tests still certified the C1 fix as complete.
+SOURCES = [WA_JS_DIR / "wajs_scripts.py", WA_JS_DIR / "wajs_wrapper.py"]
 
 
 @pytest.mark.parametrize(("method_name", "param"), TAINTED_SITES)
@@ -92,13 +91,20 @@ def test_benign_ids_are_unchanged_in_meaning():
 
 
 def test_source_contains_no_raw_single_quote_interpolation():
-    """Static guard: stops the vulnerable pattern being reintroduced later."""
-    source = SOURCE.read_text(encoding="utf-8")
+    """Static guard: stops the vulnerable pattern being reintroduced later.
+
+    Scans every JS-generating module, not just wajs_scripts.py — the C1 sink that
+    survived this PR's first pass lived in wajs_wrapper.py.
+    """
     pattern = re.compile(r"'\{(" + "|".join(TAINTED_PARAMS) + r")\}'")
 
-    offenders = sorted(set(pattern.findall(source)))
+    offenders = sorted(
+        f"{path.name}: {param}"
+        for path in SOURCES
+        for param in set(pattern.findall(path.read_text(encoding="utf-8")))
+    )
 
-    assert offenders == [], "raw single-quote interpolation reintroduced for: " + ", ".join(
+    assert offenders == [], "raw single-quote interpolation reintroduced in: " + ", ".join(
         offenders
     )
 
@@ -148,9 +154,14 @@ def test_numeric_defaults_are_unchanged():
 
 def test_source_has_no_uncoerced_numeric_interpolation():
     """Static guard: a numeric param must never be interpolated straight from the argument."""
-    source = SOURCE.read_text(encoding="utf-8")
     pattern = re.compile(r"\{(limit|count|min_row_id|duration_ms)\}")
 
-    offenders = sorted(set(pattern.findall(source)))
+    offenders = sorted(
+        f"{path.name}: {param}"
+        for path in SOURCES
+        for param in set(pattern.findall(path.read_text(encoding="utf-8")))
+    )
 
-    assert offenders == [], "uncoerced numeric interpolation reintroduced: " + ", ".join(offenders)
+    assert offenders == [], "uncoerced numeric interpolation reintroduced in: " + ", ".join(
+        offenders
+    )
