@@ -1,4 +1,5 @@
 import json
+import re
 
 
 class WAJS_Scripts:
@@ -9,6 +10,11 @@ class WAJS_Scripts:
     NOTE: `wpp` here refers to `window.__react_devtools_hook` (the hidden WPP cache).
           The bridge script sets `const wpp = window.__react_devtools_hook;` before eval.
     """
+
+    # `python_alias` lands in an *identifier* position (`window.<alias>(dump)`), not a
+    # string literal, so json.dumps() cannot make it safe — a value like
+    # `x);alert(1);//` would still execute. Validate it as an identifier instead.
+    _JS_IDENTIFIER = re.compile(r"[A-Za-z_$][A-Za-z0-9_$]*")
 
     # ─────────────────────────────────────────────
     # 1. CORE & CONNECTION
@@ -543,7 +549,14 @@ class WAJS_Scripts:
         Sets up the zero-poll message push bridge.
         Binds WPP's `chat.new_message` event to the Playwright-exposed Python callback.
         Sends the full raw MsgModel dump — no fields filtered out.
+
+        Raises:
+            ValueError: if ``python_alias`` is not a valid JavaScript identifier.
         """
+        if not cls._JS_IDENTIFIER.fullmatch(python_alias):
+            raise ValueError(
+                f"python_alias must be a valid JavaScript identifier, got {python_alias!r}"
+            )
         return f"""(() => {{
             const wpp = window.__react_devtools_hook;
             if (!wpp || window._camou_has_listener) return false;

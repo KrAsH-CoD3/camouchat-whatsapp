@@ -24,8 +24,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in `wajs_scripts.py` now embed values via `json.dumps()`, as does the `send_text_message`
   fallback in `wajs_wrapper.py` — the same sink had survived there. The numeric parameters
   are additionally coerced with `int()`, since Python does not enforce type hints at runtime.
-  Regression tests in `tests/unit/WhatsApp/test_wajs_scripts.py` cover every tainted
-  parameter and scan both modules for the raw-interpolation pattern.
+  A third category — parameters spliced into an *identifier* position rather than a string
+  literal, where `json.dumps()` cannot help because the value is never quoted — is now
+  validated against the JavaScript identifier grammar. Regression tests in
+  `tests/unit/WhatsApp/test_wajs_scripts.py` cover every tainted parameter and scan both
+  modules for the raw-interpolation pattern.
 - Hardened media file writes against path traversal. `WapiWrapper._save_bytes()` now
   resolves its destination and refuses any path that escapes a configured `media_root`,
   raising `ValueError` before any directory is created. The `media_root` argument is

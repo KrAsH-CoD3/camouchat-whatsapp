@@ -165,3 +165,27 @@ def test_source_has_no_uncoerced_numeric_interpolation():
     assert offenders == [], "uncoerced numeric interpolation reintroduced in: " + ", ".join(
         offenders
     )
+
+
+# A third category of sink: parameters spliced into an *identifier* position rather than a
+# string literal. json.dumps() cannot neutralise these — the value is not quoted — so they
+# have to be validated against the identifier grammar instead.
+
+IDENTIFIER_SITES = [
+    ("setup_new_message_listener", "python_alias"),
+]
+
+
+@pytest.mark.parametrize(("method_name", "param"), IDENTIFIER_SITES)
+def test_identifier_parameter_rejects_non_identifiers(method_name, param):
+    """A breakout payload must raise, not be spliced into an identifier slot."""
+    with pytest.raises(ValueError, match="JavaScript identifier"):
+        getattr(WAJS_Scripts, method_name)("x);alert(1);//")
+
+
+@pytest.mark.parametrize(("method_name", "param"), IDENTIFIER_SITES)
+def test_identifier_parameter_accepts_valid_aliases(method_name, param):
+    """Ordinary aliases, including ones using JS-only '$', still render."""
+    script = getattr(WAJS_Scripts, method_name)("_camou$push")
+
+    assert "window._camou$push(dump)" in script
